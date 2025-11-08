@@ -1,5 +1,6 @@
 import { VM, VMScript } from 'vm2';
 import { FlowPayload, FlowSecrets, ExecutionResult } from './types'; // Ahora incluye ExecutionResult
+import { logger } from './logger';
 
 /**
  * Lista blanca de módulos que el script del usuario tiene permitido importar.
@@ -26,7 +27,7 @@ export const executeUserScript = async (
         try {
             sandboxedModules[mod] = require(mod);
         } catch (error) {
-            console.warn(`[SANDBOX] Failed to load whitelisted module '${mod}'`, error);
+            logger.error(`[SANDBOX] Failed to load whitelisted module '${mod}'`, error);
             // Si un módulo no se puede cargar, no lo inyectamos.
         }
     }
