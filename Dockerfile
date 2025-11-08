@@ -39,9 +39,13 @@ COPY --from=builder /app/package.json ./
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 
-# 3. Configuración de Entrada
+# 3. Configuración de Seguridad y Entrada
 # Cloud Run inyecta la variable PORT automáticamente.
 ENV PORT 8080
+ENV NODE_ENV production
+
+# Crear un usuario no-root para mayor seguridad
+USER nonroot
 
 # Comando de Ejecución: Inicia el servidor Hono compilado
 # Asumimos que la compilación genera un archivo dist/server.js que exporta el handler.
