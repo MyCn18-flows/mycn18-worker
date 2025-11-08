@@ -5,3 +5,4 @@ dist/
 coverage/
 npm-debug.log*
 node_modules/*
+TODOs.md

@@ -1,0 +1,38 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Run ESLint
+      run: npm run lint # Assuming a lint script will be added to package.json
+
+    - name: Run TypeScript type check
+      run: npm run typecheck # Assuming a typecheck script will be added to package.json
+
+    - name: Build project
+      run: npm run build
+
+    - name: Run tests
+      run: npm test # Assuming a test script will be properly configured in package.json
