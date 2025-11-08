@@ -1,0 +1,29 @@
+# Configuración de Dependabot
+# Revisa las dependencias semanalmente y abre Pull Requests automáticamente.
+
+version: 2
+updates:
+  # Configuración para dependencias de npm (package.json)
+  - package-ecosystem: "npm"
+    directory: "/" # Busca en el directorio raíz (donde está package.json)
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    # Etiquetado para facilitar la organización de los PRs
+    labels:
+      - "dependencies"
+      - "npm"
+    # Solo agrupa dependencias de parches o menores
+    groups:
+      dev-dependencies:
+        patterns:
+          - "*"
+        update-types:
+          - "patch"
+          - "minor"
+
+  # Opcional: Configuración para acciones de GitHub
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
