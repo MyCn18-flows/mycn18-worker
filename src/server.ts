@@ -20,7 +20,6 @@ app.use('*', async (c, next) => {
 // --- Endpoint Principal del Webhook ---
 app.post('/api/webhook/:flowId', async (c) => {
     const startTime = performance.now(); 
-    const startTime = performance.now(); 
     const flowId = c.req.param('flowId');
 
     let payload: FlowPayload;
@@ -36,7 +35,6 @@ app.post('/api/webhook/:flowId', async (c) => {
     // --- Lógica de Orquestación: Cargar y Validar ---
     
     const flow = await getFlowDocument(flowId);
-    let userId: string = flow ? flow.userId : 'unknown';
     let userId: string = flow ? flow.userId : 'unknown';
 
     if (!flow || !flow.isActive) {
@@ -89,18 +87,12 @@ app.post('/api/webhook/:flowId', async (c) => {
         executionSecrets
     );
 
-    const durationMs = performance.now() - startTime;
-    let finalStatus: ExecutionLog['status'] = executionResult.success ? LogStatus.SUCCESS : LogStatus.FAIL;
-
     // --- Manejo de Éxito o Fracaso ---
     const durationMs = performance.now() - startTime;
     let finalStatus: ExecutionLog['status'] = executionResult.success ? LogStatus.SUCCESS : LogStatus.FAIL;
 
-    // --- Manejo de Éxito o Fracaso ---
     
     if (executionResult.success) {
-        // 3. Delegar la Acción de Salida a la Cola de Tareas (Desacoplamiento)
-        const dispatchStatus = await dispatchActionAsynchronously(flow, executionResult.result); 
         // 3. Delegar la Acción de Salida a la Cola de Tareas (Desacoplamiento)
         const dispatchStatus = await dispatchActionAsynchronously(flow, executionResult.result); 
         
@@ -123,9 +115,7 @@ app.post('/api/webhook/:flowId', async (c) => {
             // Retornamos 500 ya que es un fallo de infraestructura
             return c.json({ 
                 status: 'dispatch_failed', 
-                status: 'dispatch_failed', 
                 flowId: flowId, 
-                message: `Failed to queue action: ${dispatchStatus.error}` 
                 message: `Failed to queue action: ${dispatchStatus.error}` 
             }, 500); 
         }
@@ -145,12 +135,9 @@ app.post('/api/webhook/:flowId', async (c) => {
         // Respuesta inmediata al cliente de Webhook con 202 Accepted
         return c.json({ 
             status: 'completed_and_dispatched', 
-            status: 'completed_and_dispatched', 
             flowId: flowId, 
             message: 'Script executed successfully. Action dispatched to task queue.',
-            message: 'Script executed successfully. Action dispatched to task queue.',
             result: executionResult.result 
-        }, 202); 
         }, 202); 
         
     } else {
