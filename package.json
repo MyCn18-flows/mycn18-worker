@@ -3,6 +3,18 @@
   "version": "1.0.0",
   "description": "ScriptFlow - orchestrator runtime (MVP)",
   "main": "dist/server.js",
+  "author": "Luis Alberto Hernández Roselló",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=20 <21"
+  },
+  "keywords": [
+    "scriptflow",
+    "orchestrator",
+    "serverless",
+    "vm2"
+  ],
   "scripts": {
     "start": "node dist/server.js",
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
@@ -11,15 +23,6 @@
     "lint": "eslint src/**/*.ts",
     "typecheck": "tsc --noEmit"
   },
-  "keywords": [
-    "scriptflow",
-    "orchestrator",
-    "serverless",
-    "vm2"
-  ],
-  "author": "Luis Alberto Hernández Roselló",
-  "license": "MIT",
-  "type": "commonjs",
   "dependencies": {
     "@google-cloud/secret-manager": "^6.1.1",
     "@google-cloud/tasks": "^6.2.1",
