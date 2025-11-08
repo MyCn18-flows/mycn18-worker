@@ -42,8 +42,6 @@ const FIREBASE_CONFIG: FirebaseOptions = {
 
 let app: FirebaseApp | undefined; // Permite que sea undefined si no se inicializa
 let db: Firestore | undefined;    // Permite que sea undefined si no se inicializa
-let app: FirebaseApp | undefined; // Permite que sea undefined si no se inicializa
-let db: Firestore | undefined;    // Permite que sea undefined si no se inicializa
 
 // -------------------------------------------------------------
 // 1. INICIALIZACIÓN DE FIREBASE

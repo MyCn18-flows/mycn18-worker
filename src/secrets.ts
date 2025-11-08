@@ -1,5 +1,6 @@
 import { SecretManagerServiceClient } from '@google-cloud/secret-manager';
 import { FlowSecrets } from './types'; 
+import { logger } from './logger';
 
 // --- Configuración y Clientes ---
 
@@ -9,7 +10,7 @@ const client = new SecretManagerServiceClient();
 
 // Expresión regular para validar y extraer el nombre del recurso de GSM.
 // Acepta 'latest' o un número de versión.
-const GSM_RESOURCE_REGEX = /^projects\/[^\/]+\/secrets\/[^\/]+\/versions\/(latest|\d+)$/;
+const GSM_RESOURCE_REGEX = /^projects\/[^/]+\/secrets\/[^/]+\/versions\/(latest|\d+)$/;
 
 // --- Funciones Internas ---
 
@@ -32,7 +33,7 @@ async function getSecretFromGSM(secretResourceName: string): Promise<string> {
 
         return secretValue;
     } catch (error) {
-        console.error(`GSM_ERROR: Failed to access secret ${secretResourceName}. Ensure IAM permissions are set.`, error);
+        logger.error(`GSM_ERROR: Failed to access secret ${secretResourceName}. Ensure IAM permissions are set.`, error);
         throw new Error(`Failed to resolve secret ${secretResourceName}`);
     }
 }
@@ -61,7 +62,7 @@ export async function resolveUserSecrets(flowSecrets: FlowSecrets): Promise<Flow
                 return [key, secretValue];
             } catch (error) {
                 // Si la resolución falla, el flujo debe abortar por seguridad
-                console.error(`SECURITY_CRITICAL: Flow aborted due to failure resolving secret ${key}.`);
+                logger.error(`SECURITY_CRITICAL: Flow aborted due to failure resolving secret ${key}.`);
                 throw error; 
             }
         }
@@ -70,16 +71,11 @@ export async function resolveUserSecrets(flowSecrets: FlowSecrets): Promise<Flow
         return [key, value];
     });
 
-    try {
-        const resolvedEntries = await Promise.all(resolutionPromises);
-        
-        // Convertir el array de [key, value] de vuelta a un objeto FlowSecrets
-        const resolvedSecrets: FlowSecrets = Object.fromEntries(resolvedEntries);
+    const resolvedEntries = await Promise.all(resolutionPromises);
+    
+    // Convertir el array de [key, value] de vuelta a un objeto FlowSecrets
+    const resolvedSecrets: FlowSecrets = Object.fromEntries(resolvedEntries);
 
-        // Retornamos el objeto de secrets limpio y resuelto
-        return resolvedSecrets;
-    } catch (error) {
-        // Propagar cualquier error de resolución crítica
-        throw error;
-    }
+    // Retornamos el objeto de secrets limpio y resuelto
+    return resolvedSecrets;
 }

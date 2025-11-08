@@ -1,3 +1,4 @@
+import { logger } from './logger';
 import { FlowDocument } from './types';
 
 // Usamos una variable global para cachear el cliente de Cloud Tasks una vez que se inicializa.
@@ -13,7 +14,7 @@ const QUEUE_NAME = process.env.CLOUD_TASKS_QUEUE_NAME;
 const ACTION_HANDLER_URL = process.env.CLOUD_RUN_ACTION_HANDLER_URL; 
 
 if (!PROJECT_ID || !LOCATION || !QUEUE_NAME || !ACTION_HANDLER_URL) {
-    console.error("CRITICAL: Cloud Tasks configuration is incomplete. Action dispatch will fail.");
+    logger.error("CRITICAL: Cloud Tasks configuration is incomplete. Action dispatch will fail.");
 }
 
 // -------------------------------------------------------------------------
@@ -42,10 +43,10 @@ export const dispatchActionAsynchronously = async (
             // Importación dinámica asíncrona de la librería ESM
             const { CloudTasksClient } = await import('@google-cloud/tasks');
             taskClient = new CloudTasksClient();
-            console.log("Cloud Tasks Client initialized dynamically.");
+            logger.log("Cloud Tasks Client initialized dynamically.");
         } catch (error) {
             const initError = `Failed to dynamically initialize Cloud Tasks client: ${error}`;
-            console.error(`[TASKS_ERROR] ${initError}`);
+            logger.error(`[TASKS_ERROR] ${initError}`);
             return { success: false, error: initError };
         }
     }
@@ -79,17 +80,17 @@ export const dispatchActionAsynchronously = async (
 
     try {
         await taskClient.createTask(task);
-        console.log(`[TASKS] Action for flow ${flow.flowId} successfully queued to ${QUEUE_NAME}.`); 
+        logger.log(`[TASKS] Action for flow ${flow.flowId} successfully queued to ${QUEUE_NAME}.`); 
         return { success: true };
     } catch (error) {
         const errorMessage = `Failed to queue task: ${error instanceof Error ? error.message : String(error)}`;
-        console.error(`[TASKS_ERROR] ${errorMessage}`);
+        logger.error(`[TASKS_ERROR] ${errorMessage}`);
         return { success: false, error: errorMessage };
     }
 };
 
 // Función obsoleta mantenida para compatibilidad de importaciones
 export const sendActionWebhook = async (): Promise<any> => {
-    console.warn("WARNING: sendActionWebhook is deprecated. The orchestrator should use dispatchActionAsynchronously.");
+    logger.warn("WARNING: sendActionWebhook is deprecated. The orchestrator should use dispatchActionAsynchronously.");
     return { success: false, error: "Deprecated function called." };
 };
