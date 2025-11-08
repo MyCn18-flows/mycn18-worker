@@ -41,3 +41,30 @@ export type FlowDocument = {
     createdAt: Date;
     updatedAt: Date;
 };
+
+
+/**
+ * 
+ */
+export enum LogStatus {
+    SUCCESS = 'SUCCESS',
+    FAIL = 'FAIL',
+    TIMEOUT = 'TIMEOUT',
+    ACTION_FAIL = 'ACTION_FAIL'
+}
+
+/**
+ * Estructura de un log de ejecución almacenado en Firestore.
+ * Esto se usa para auditoría, debugging y facturación.
+ */
+export type ExecutionLog = {
+    flowId: string;
+    userId: string;
+    status: LogStatus;
+    durationMs: number;
+    timestamp: Date;
+    payload: FlowPayload; // Para auditoría
+    result?: unknown; // Si fue SUCCESS
+    error?: string; // Si fue FAIL/TIMEOUT
+    actionStatus?: number; // Status code del webhook de salida
+};

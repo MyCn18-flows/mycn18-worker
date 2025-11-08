@@ -1,41 +1,68 @@
-import { initializeApp, FirebaseApp, getApps } from 'firebase/app';
-import { getFirestore, doc, getDoc, Firestore } from 'firebase/firestore';
+import { initializeApp, FirebaseApp, getApps, FirebaseOptions } from 'firebase/app';
+// Importamos la API web de Firestore para usarla en Cloud Run
+import { getFirestore, doc, getDoc, Firestore, collection, addDoc } from 'firebase/firestore'; 
 import { FlowDocument, FlowSecrets } from './types';
+import { ExecutionLog } from './types';
 
-// La configuración se obtendría del entorno de Cloud Run/GCP
-// Usaremos variables globales que se inyectan en el entorno serverless
-const FIREBASE_CONFIG = {
-    apiKey: process.env.FIREBASE_API_KEY,
-    authDomain: process.env.FIREBASE_AUTH_DOMAIN,
-    projectId: process.env.FIREBASE_PROJECT_ID,
-    storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
-    messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID,
-    appId: process.env.FIREBASE_APP_ID,
+// -------------------------------------------------------------
+// 0. CONFIGURACIÓN
+// -------------------------------------------------------------
+
+// Las opciones de Firebase se leen de las variables de entorno de Cloud Run.
+
+const apiKey: string | undefined = process.env.FIREBASE_API_KEY;
+const authDomain: string | undefined = process.env.FIREBASE_AUTH_DOMAIN;
+const projectId: string | undefined = process.env.FIREBASE_PROJECT_ID;
+const storageBucket: string | undefined = process.env.FIREBASE_STORAGE_BUCKET;
+const messagingSenderId: string | undefined = process.env.FIREBASE_MESSAGING_SENDER_ID;
+const appId: string | undefined = process.env.FIREBASE_APP_ID;
+
+if (!apiKey || !authDomain || !projectId || !storageBucket || !messagingSenderId || !appId) {
+    const errorMessage: string = 'One or more Firebase configuration environment variables are missing.';
+    console.warn(errorMessage, {
+        FIREBASE_API_KEY: !!apiKey,
+        FIREBASE_AUTH_DOMAIN: !!authDomain,
+        FIREBASE_PROJECT_ID: !!projectId,
+        FIREBASE_STORAGE_BUCKET: !!storageBucket,
+        FIREBASE_MESSAGING_SENDER_ID: !!messagingSenderId,
+        FIREBASE_APP_ID: !!appId,
+    });
+    throw new Error(errorMessage);
+}
+
+const FIREBASE_CONFIG: FirebaseOptions = {
+    apiKey,
+    authDomain,
+    projectId,
+    storageBucket,
+    messagingSenderId,
+    appId,
 };
 
-let app: FirebaseApp;
-let db: Firestore;
+let app: FirebaseApp | undefined; // Permite que sea undefined si no se inicializa
+let db: Firestore | undefined;    // Permite que sea undefined si no se inicializa
 
 // -------------------------------------------------------------
 // 1. INICIALIZACIÓN DE FIREBASE
 // -------------------------------------------------------------
 
 /**
- * Inicializa la aplicación Firebase y el servicio Firestore.
- * Se asegura de que la inicialización solo ocurra una vez (necesario en serverless).
+ * Inicializa la aplicación Firebase y el servicio Firestore (solo una vez).
+ * Esto es clave para el rendimiento en el entorno serverless (cold start).
  */
 export const initializeFirebase = (): void => {
-    // Si ya está inicializada, no hacemos nada.
+    // Si ya está inicializada (patrón singleton), usa la instancia existente.
     if (getApps().length) {
         app = getApps()[0];
+
+        if (!app) {
+            const errorMessage: string = 'Firebase app instance is undefined despite getApps() returning length > 0.'
+            console.warn(errorMessage, getApps());
+            throw new Error(errorMessage);
+        }
+
         db = getFirestore(app);
         console.log('Firestore client already initialized.');
-        return;
-    }
-    
-    // Validamos que la configuración mínima esté presente
-    if (!FIREBASE_CONFIG.projectId) {
-        console.error('FIREBASE_PROJECT_ID is not defined. DB functionality will be mocked.');
         return;
     }
     
@@ -48,37 +75,27 @@ export const initializeFirebase = (): void => {
     }
 };
 
-// Inicializar al cargar el módulo
+// Se ejecuta al cargar el módulo (durante el cold start).
 initializeFirebase();
 
 // -------------------------------------------------------------
-// 2. FUNCIONES DE LECTURA DE FLUJOS
+// 2. FUNCIONES DE LECTURA DE FLUJOS (Orquestación)
 // -------------------------------------------------------------
 
 /**
- * Recupera un documento de flujo por su flowId (Webhook ID).
+ * Recupera un documento de flujo por su flowId.
  * @param flowId - El ID del flujo a buscar.
  * @returns El FlowDocument si se encuentra y está activo, o null.
  */
 export const getFlowDocument = async (flowId: string): Promise<FlowDocument | null> => {
     if (!db) {
-        console.warn('Firestore not initialized. Returning mock flow.');
-        // Si la DB no está inicializada (ej. en desarrollo sin ENV), retornamos un mock
-        return {
-            userId: 'mock-user',
-            flowId: flowId,
-            isActive: true,
-            userCode: 'return { status: "mocked", message: "DB not connected" };',
-            secrets: { MOCK_KEY: 'mock-secret' } as FlowSecrets,
-            actionUrl: 'https://mock.example.com/action',
-            createdAt: new Date(),
-            updatedAt: new Date(),
-        };
+        const errorMessage: string = 'Database not initialized.';
+        console.warn(errorMessage);
+        throw new Error(errorMessage);
     }
 
     try {
-        // En Firestore, asumiremos que los flujos se almacenan en una colección global 'flows'
-        // con el flowId como ID del documento.
+        // Asumimos que los flujos se almacenan en una colección 'flows'
         const flowRef = doc(db, 'flows', flowId);
         const flowSnap = await getDoc(flowRef);
 
@@ -86,13 +103,9 @@ export const getFlowDocument = async (flowId: string): Promise<FlowDocument | nu
             const data = flowSnap.data() as FlowDocument;
             
             if (data.isActive) {
-                // Aquí podrías validar más campos si fuera necesario
-                return { 
-                    ...data,
-                    // Asegurar que las fechas son objetos Date si no lo son ya
-                    createdAt: (data.createdAt as any).toDate ? (data.createdAt as any).toDate() : data.createdAt,
-                    updatedAt: (data.updatedAt as any).toDate ? (data.updatedAt as any).toDate() : data.updatedAt,
-                };
+                // Devolvemos los datos. El tipado FlowDocument asume que
+                // las propiedades ya son correctas.
+                return data;
             }
         }
         
@@ -100,5 +113,30 @@ export const getFlowDocument = async (flowId: string): Promise<FlowDocument | nu
     } catch (error) {
         console.error(`Error fetching flow ${flowId} from Firestore:`, error);
         return null; // Error de conexión o de lectura
+    }
+};
+
+// -------------------------------------------------------------
+// 3. FUNCIONES DE REGISTRO (LOGGING)
+// -------------------------------------------------------------
+
+/**
+ * Registra un evento completo de ejecución en la colección 'execution_logs'.
+ * @param logData - Los datos del log a registrar.
+ */
+export const logExecution = async (logData: ExecutionLog): Promise<void> => {
+    if (!db) {
+        const errorMessage: string = 'Database not initialized.';
+        console.warn(errorMessage);
+        throw new Error(errorMessage);
+    }
+
+    try {
+        // Creamos una nueva entrada de log.
+        const logsCollection = collection(db, 'execution_logs');
+        await addDoc(logsCollection, logData);
+    } catch (error) {
+        console.error(`CRITICAL: Failed to save execution log for ${logData.flowId}:`, error);
+        // En un escenario real, esto debería ir a un sistema de errores de emergencia.
     }
 };
