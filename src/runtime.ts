@@ -2,6 +2,7 @@ import { VM, VMScript } from 'vm2';
 import { FlowPayload, FlowSecrets, ExecutionResult } from './types.js';
 import { safeHttpClient } from './safe-mods/http.js';
 import { logger } from './logger.js';
+import { safeModuleResolver, initializeUserModules, InjectedModule } from './safe-mods/resolver.js';
 
 /**
  * Ejecuta el código del usuario dentro de un entorno seguro y aislado (sandbox).
@@ -13,7 +14,8 @@ import { logger } from './logger.js';
 export const executeUserScript = async (
     userCode: string,
     payload: FlowPayload,
-    secrets: FlowSecrets
+    secrets: FlowSecrets,
+    userModulesToInject: Record<string, InjectedModule> // Nuevo parámetro
 ): Promise<ExecutionResult> => {
     // Configuración del logger seguro para el sandbox
     const sandboxedLogger = {
@@ -21,6 +23,9 @@ export const executeUserScript = async (
         warn: (message: string, context?: Record<string, unknown>) => logger.warn(`[USER_SCRIPT] ${message}`, context),
         error: (message: string, error?: Error | unknown, context?: Record<string, unknown>) => logger.error(`[USER_SCRIPT] ${message}`, error, context),
     };
+
+    // Initialize user modules for this execution
+    initializeUserModules(userModulesToInject);
 
     // 1. Configuración del Sandbox
     const vm = new VM({
@@ -36,19 +41,17 @@ export const executeUserScript = async (
             // Inyectar funciones de timer para código asíncrono
             setTimeout: setTimeout,
             clearTimeout: clearTimeout,
-            // No inyectar módulos del host directamente aquí.
-            // Si se necesitan otras utilidades (lodash, moment), se deben crear shims seguros.
         },
         
         // Configuración de Seguridad de Módulos (Lista Blanca)
-        // Deshabilitamos 'external' y 'mock' para forzar la inyección controlada.
         // @ts-expect-error - 'require' es una opción de vm2 válida pero no incluida en sus tipos oficiales.
         require: {
-            external: false, // No permite require() externo
-            builtin: [],     // No permite módulos nativos de Node por defecto
+            external: true, // Must be true to use custom resolver
+            builtin: [],     // Does not allow native Node modules by default
+            custom: safeModuleResolver, // Here the whitelisting logic is injected
             root: './',
         }
-    }); // Cast to any to bypass TypeScript error for 'require' property
+    });
 
     try {
         // Envolver el código del usuario en una IIFE asíncrona para poder usar 'await' y 'return'.
@@ -66,8 +69,6 @@ export const executeUserScript = async (
     } catch (error: Error | unknown) {
         // Captura errores de sintaxis, timeouts, o excepciones dentro del script
         const errorMessage = error instanceof Error? error.message : String(error);
-        
-        // vm2 does not have a dispose method. The VM instance is garbage collected.
         
         return { success: false, error: errorMessage };
     }

@@ -28,12 +28,14 @@ export type ExecutionResult = {
 // -------------------------------------------------------------
 
 /**
- * Estructura de un Flow Document almacenado en Firestore.
+ * Estructura de un Flow Document almacenado en PostgreSQL.
+ * Los campos `secretReferences`, `userCode`, `actionUrl` se almacenan como JSONB.
  * El motor Orchestrator solo necesita estos campos.
  */
 export type FlowDocument = {
     userId: string;
     flowId: string;
+    flowName: string;           // Nombre del flujo para identificación
     isActive: boolean;
     userCode: string;           // El código TS/JS a ejecutar
     secretReferences: FlowSecrets; // Referencias a los secrets (ej: nombres de recursos de GSM)
@@ -44,7 +46,7 @@ export type FlowDocument = {
 
 
 /**
- * 
+ * Estados posibles para el log de ejecución.
  */
 export enum LogStatus {
     SUCCESS = 'SUCCESS',
@@ -54,17 +56,19 @@ export enum LogStatus {
 }
 
 /**
- * Estructura de un log de ejecución almacenado en Firestore.
+ * Estructura de un log de ejecución almacenado en PostgreSQL.
+ * Se usan campos JSONB para `payload` y `result` para flexibilidad.
  * Esto se usa para auditoría, debugging y facturación.
  */
 export type ExecutionLog = {
     flowId: string;
     userId: string;
+    flowName: string; // Nombre del flujo para auditoría
     status: LogStatus;
     durationMs: number;
     timestamp: Date;
-    payload: FlowPayload; // Para auditoría
-    result?: unknown; // Si fue SUCCESS
+    payload: FlowPayload; // Para auditoría (JSONB)
+    result?: unknown; // Si fue SUCCESS (JSONB)
     error?: string; // Si fue FAIL/TIMEOUT
     actionStatus?: number; // Status code del webhook de salida
 };

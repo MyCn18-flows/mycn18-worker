@@ -1,117 +1,99 @@
+import { Queue } from 'bullmq';
+import * as IORedis from 'ioredis';
 import { logger } from './logger.js';
 import { FlowDocument } from './types.js';
-import { CloudTasksClient } from '@google-cloud/tasks';
-
-// Usamos una variable global para cachear el cliente de Cloud Tasks una vez que se inicializa.
-// En un entorno de producción, se podría usar un cliente de Cloud Tasks inicializado de forma síncrona
-// o un patrón de inyección de dependencias más robusto.
-let taskClient: CloudTasksClient | null = null; 
 
 // -------------------------------------------------------------------------
-// CONFIGURACIÓN (Debe estar definida en las variables de entorno)
+// CONFIGURACIÓN
 // -------------------------------------------------------------------------
-const PROJECT_ID = process.env.CLOUD_TASKS_PROJECT_ID;
-const LOCATION = process.env.CLOUD_TASKS_LOCATION; 
-const QUEUE_NAME = process.env.CLOUD_TASKS_QUEUE_NAME; 
-const ACTION_HANDLER_URL = process.env.CLOUD_RUN_ACTION_HANDLER_URL; 
 
-// **CORRECCIÓN 1: Se envuelve el bloque de comprobación de config en una función o se elimina el if suelto.**
-// En este caso, lo he dejado como un bloque de inicialización para que se ejecute una vez.
-if (!PROJECT_ID || !LOCATION || !QUEUE_NAME || !ACTION_HANDLER_URL) {
-    logger.error("CRITICAL: Cloud Tasks configuration is incomplete. Action dispatch will fail.");
-}
+// REDIS_CONNECTION_URL and QUEUE_NAME will be read when initializeQueue is called
+const QUEUE_NAME = process.env.BULLMQ_QUEUE_NAME || 'flow-actions'; // Keep QUEUE_NAME here as it's used in Queue constructor
 
 // -------------------------------------------------------------------------
-// FUNCIÓN ASÍNCRONA DE DESPACHO
+// INICIALIZACIÓN DE LA COLA
 // -------------------------------------------------------------------------
+
+let actionQueue: Queue | null = null;
 
 /**
- * Inicializa el cliente de Cloud Tasks si aún no está inicializado.
- * @returns El cliente de Cloud Tasks inicializado o null si falla.
+ * Inicializa la cola de BullMQ.
+ * Se reutiliza la instancia de la cola si ya ha sido creada.
+ * @returns La instancia de la cola de BullMQ.
  */
-const initializeTaskClient = async (): Promise<CloudTasksClient | null> => {
-    if (taskClient) {
-        return taskClient;
+const initializeQueue = (): Queue => {
+    if (actionQueue) {
+        return actionQueue;
+    }
+
+    const REDIS_CONNECTION_URL = process.env.REDIS_CONNECTION_URL;
+    if (!REDIS_CONNECTION_URL) {
+        const errorMessage = "REDIS_CONNECTION_URL is not defined. Cannot initialize BullMQ queue.";
+        logger.error(`CRITICAL: ${errorMessage}`);
+        throw new Error(errorMessage);
     }
 
     try {
-        // La importación ya no es dinámica si se usa 'import { CloudTasksClient }' arriba.
-        // Si el proyecto usa ES Modules y la importación falla, se podría volver a la importación dinámica.
-        // Asumiendo un entorno Node.js/CommonJS donde la importación de arriba funciona:
-        taskClient = new CloudTasksClient();
-        logger.info("Cloud Tasks Client initialized.");
-        return taskClient;
+        // Se crea una instancia de IORedis para la conexión.
+        // El `default` es necesario por la interoperabilidad entre ES Modules y CommonJS.
+        const connection = new (IORedis as any).default(REDIS_CONNECTION_URL, {
+            maxRetriesPerRequest: null, // Evita reintentos infinitos en serverless
+            enableReadyCheck: false,
+        });
+
+        actionQueue = new Queue(QUEUE_NAME, {
+            connection,
+        });
+        logger.info(`BullMQ queue "${QUEUE_NAME}" initialized.`);
+        return actionQueue;
     } catch (error) {
-        const initError = `Failed to initialize Cloud Tasks client: ${error}`;
-        logger.error(`[TASKS_ERROR] ${initError}`);
-        return null;
+        logger.error('Failed to initialize BullMQ queue:', error);
+        throw error;
     }
 };
 
+// -------------------------------------------------------------------------
+// FUNCIÓN DE DESPACHO
+// -------------------------------------------------------------------------
+
 /**
- * Delega el envío del resultado del flujo a una cola de tareas (Google Cloud Tasks).
+ * Delega el envío del resultado del flujo a una cola de BullMQ (Redis).
  * @param flow El documento de flujo completo.
  * @param result El resultado retornado por el script del usuario.
  * @returns El estado de la PUESTA EN COLA (asíncrona).
  */
 export const dispatchActionAsynchronously = async (
-    flow: FlowDocument, 
+    flow: FlowDocument,
     result: unknown
 ): Promise<{ success: boolean, error?: string }> => {
-
-    // Comprobación de configuración crítica
-    if (!PROJECT_ID || !LOCATION || !QUEUE_NAME || !ACTION_HANDLER_URL) {
-        const errorMessage = "Cloud Tasks configuration is missing.";
-        logger.error(errorMessage);
-        return { success: false, error: errorMessage };
-    }
-    
-    const currentTaskClient = await initializeTaskClient();
-    if (!currentTaskClient) {
-        const errorMessage = "Cloud Tasks client failed to initialize.";
-        return { success: false, error: errorMessage };
-    }
-
-    // Payload que se enviará al Action Handler (servicio de Cloud Run separado)
-    const taskPayload = {
-        flowId: flow.flowId,
-        actionUrl: flow.actionUrl,
-        userId: flow.userId,
-        result: result,
-    };
-    
-    // Ruta completa de la cola de tareas
-    const parentPath = currentTaskClient.queuePath(PROJECT_ID, LOCATION, QUEUE_NAME);
-
-    const taskRequest = { 
-        parent: parentPath,
-        task: {
-            httpRequest: {
-                url: ACTION_HANDLER_URL, 
-                httpMethod: 1, // POST
-                // El cuerpo debe ser codificado en base64 para Cloud Tasks
-                body: Buffer.from(JSON.stringify(taskPayload)).toString('base64'),
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-            },
-        },
-    };
-
     try {
-        // Se llama al cliente con el objeto request
-        await currentTaskClient.createTask(taskRequest);
-        logger.info(`[TASKS] Action for flow ${flow.flowId} successfully queued to ${QUEUE_NAME}.`); 
+        const queue = initializeQueue();
+
+        // Payload que se enviará al worker que procesa las acciones.
+        const jobPayload = {
+            flowId: flow.flowId,
+            actionUrl: flow.actionUrl,
+            userId: flow.userId,
+            result: result,
+        };
+
+        // Añadimos el trabajo a la cola.
+        // El nombre del trabajo puede ser descriptivo, ej: 'send-webhook'
+        await queue.add('dispatch-action', jobPayload, {
+            // Opciones del trabajo (reintentos, etc.)
+            attempts: 3,
+            backoff: {
+                type: 'exponential',
+                delay: 1000,
+            },
+        });
+
+        logger.info(`[BULLMQ] Action for flow ${flow.flowId} successfully queued to "${QUEUE_NAME}".`);
         return { success: true };
+
     } catch (error) {
-        const errorMessage = `Failed to queue task: ${error instanceof Error ? error.message : String(error)}`;
-        logger.error(`[TASKS_ERROR] ${errorMessage}`);
+        const errorMessage = `Failed to queue task with BullMQ: ${error instanceof Error ? error.message : String(error)}`;
+        logger.error(`[BULLMQ_ERROR] ${errorMessage}`);
         return { success: false, error: errorMessage };
     }
-};
-
-// Función obsoleta mantenida para compatibilidad de importaciones
-export const sendActionWebhook = async (): Promise<{ success: boolean, error: string }> => { // Tipificación mejorada
-    logger.warn("WARNING: sendActionWebhook is deprecated. The orchestrator should use dispatchActionAsynchronously.");
-    return { success: false, error: "Deprecated function called." };
 };

@@ -1,5 +1,4 @@
-import { initializeApp, FirebaseApp, getApps, FirebaseOptions } from 'firebase/app';
-import { getFirestore, doc, getDoc, Firestore, collection, addDoc } from 'firebase/firestore'; 
+import { Client } from 'pg';
 import { FlowDocument, ExecutionLog } from './types.js';
 import { logger } from './logger.js';
 
@@ -7,98 +6,77 @@ import { logger } from './logger.js';
 // 0. CONFIGURACIÓN
 // -------------------------------------------------------------
 
-// Las opciones de Firebase se leen de las variables de entorno de Cloud Run.
-const apiKey: string | undefined = process.env.FIREBASE_API_KEY;
-const authDomain: string | undefined = process.env.FIREBASE_AUTH_DOMAIN;
-const projectId: string | undefined = process.env.FIREBASE_PROJECT_ID;
-const storageBucket: string | undefined = process.env.FIREBASE_STORAGE_BUCKET;
-const messagingSenderId: string | undefined = process.env.FIREBASE_MESSAGING_SENDER_ID;
-const appId: string | undefined = process.env.FIREBASE_APP_ID;
-
-if (!apiKey || !authDomain || !projectId || !storageBucket || !messagingSenderId || !appId) {
-    const errorMessage: string = 'One or more Firebase configuration environment variables are missing.';
-    logger.warn(errorMessage, {
-        FIREBASE_API_KEY: !!apiKey,
-        FIREBASE_AUTH_DOMAIN: !!authDomain,
-        FIREBASE_PROJECT_ID: !!projectId,
-        FIREBASE_STORAGE_BUCKET: !!storageBucket,
-        FIREBASE_MESSAGING_SENDER_ID: !!messagingSenderId,
-        FIREBASE_APP_ID: !!appId,
-    });
-    throw new Error(errorMessage);
-}
-
-const FIREBASE_CONFIG: FirebaseOptions = {
-    apiKey,
-    authDomain,
-    projectId,
-    storageBucket,
-    messagingSenderId,
-    appId,
-};
-
-let appInstance: FirebaseApp;
-let firestoreDb: Firestore;
+// DATABASE_URL will be read when getDbClient is called
 
 // -------------------------------------------------------------
-// 1. INICIALIZACIÓN DE FIREBASE
+// 1. FUNCIÓN DE CONEXIÓN
 // -------------------------------------------------------------
 
 /**
- * Inicializa la aplicación Firebase y el servicio Firestore (solo una vez).
- * Esto es clave para el rendimiento en el entorno serverless (cold start).
+ * Crea y conecta un nuevo cliente de PostgreSQL.
+ * En un entorno serverless, creamos una conexión por cada invocación.
+ * @returns Una instancia del cliente de PostgreSQL conectado.
  */
-export const initializeFirebase = (): void => {
-    if (getApps().length === 0) {
-        try {
-            appInstance = initializeApp(FIREBASE_CONFIG);
-            firestoreDb = getFirestore(appInstance);
-            logger.info('Firestore client initialized successfully.');
-        } catch (error) {
-            logger.error('Error initializing Firebase:', error);
-            throw error; // Re-throw to prevent further execution with uninitialized DB
-        }
-    } else {
-        const existingApp = getApps()[0];
-        if (!existingApp) {
-            const errorMessage: string = 'Firebase app instance is undefined despite getApps() returning length > 0.';
-            logger.error(errorMessage);
-            throw new Error(errorMessage);
-        }
-        appInstance = existingApp;
-        firestoreDb = getFirestore(appInstance);
-        logger.info('Firestore client already initialized.');
+const getDbClient = async (): Promise<Client> => {
+    const DATABASE_URL = process.env.DATABASE_URL;
+    if (!DATABASE_URL) {
+        const errorMessage = 'DATABASE_URL environment variable is not set.';
+        logger.error(errorMessage);
+        throw new Error(errorMessage);
+    }
+
+    const client = new Client({
+        connectionString: DATABASE_URL,
+    });
+    try {
+        await client.connect();
+        return client;
+    } catch (error) {
+        logger.error('Failed to connect to the database:', error);
+        throw error;
     }
 };
-
-// Se ejecuta al cargar el módulo (durante el cold start).
-initializeFirebase();
 
 // -------------------------------------------------------------
 // 2. FUNCIONES DE LECTURA DE FLUJOS (Orquestación)
 // -------------------------------------------------------------
 
 /**
- * Recupera un documento de flujo por su flowId.
+ * Recupera un documento de flujo por su flowId desde PostgreSQL.
  * @param flowId - El ID del flujo a buscar.
  * @returns El FlowDocument si se encuentra y está activo, o null.
  */
 export const getFlowDocument = async (flowId: string): Promise<FlowDocument | null> => {
+    const client = await getDbClient();
     try {
-        const flowRef = doc(firestoreDb, 'flows', flowId);
-        const flowSnap = await getDoc(flowRef);
+        const query = {
+            text: 'SELECT * FROM flows WHERE "flowId" = $1 AND "isActive" = true',
+            values: [flowId],
+        };
+        const res = await client.query(query);
 
-        if (flowSnap.exists()) {
-            const data = flowSnap.data() as FlowDocument;
-            if (data.isActive) {
-                return data;
-            }
+        if (res.rows.length > 0) {
+            // Mapeo manual para asegurar la estructura correcta del tipo
+            const row = res.rows[0];
+            const flowDocument: FlowDocument = {
+                userId: row.userId,
+                flowId: row.flowId,
+                flowName: row.flowName, // Added flowName
+                isActive: row.isActive,
+                userCode: row.userCode,
+                secretReferences: row.secretReferences,
+                actionUrl: row.actionUrl,
+                createdAt: new Date(row.createdAt),
+                updatedAt: new Date(row.updatedAt),
+            };
+            return flowDocument;
         }
-        
         return null; // El flujo no existe o está inactivo
     } catch (error) {
-        logger.error(`Error fetching flow ${flowId} from Firestore:`, error, { flowId });
+        logger.error(`Error fetching flow ${flowId} from PostgreSQL:`, error, { flowId });
         return null; // Error de conexión o de lectura
+    } finally {
+        await client.end();
     }
 };
 
@@ -107,15 +85,33 @@ export const getFlowDocument = async (flowId: string): Promise<FlowDocument | nu
 // -------------------------------------------------------------
 
 /**
- * Registra un evento completo de ejecución en la colección 'execution_logs'.
+ * Registra un evento completo de ejecución en la tabla 'execution_logs' de PostgreSQL.
  * @param logData - Los datos del log a registrar.
  */
 export const logExecution = async (logData: ExecutionLog): Promise<void> => {
+    const client = await getDbClient();
     try {
-        const logsCollection = collection(firestoreDb, 'execution_logs');
-        await addDoc(logsCollection, logData);
+        const query = {
+            text: `INSERT INTO execution_logs ("flowId", "userId", "flowName", status, "durationMs", timestamp, payload, result, error, "actionStatus")
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+            values: [
+                logData.flowId,
+                logData.userId,
+                logData.flowName, // Added flowName
+                logData.status,
+                logData.durationMs,
+                logData.timestamp,
+                logData.payload,
+                logData.result,
+                logData.error,
+                logData.actionStatus,
+            ],
+        };
+        await client.query(query);
     } catch (error) {
         logger.error(`CRITICAL: Failed to save execution log for ${logData.flowId}:`, error, { flowId: logData.flowId });
         // En un escenario real, esto debería ir a un sistema de errores de emergencia.
+    } finally {
+        await client.end();
     }
 };

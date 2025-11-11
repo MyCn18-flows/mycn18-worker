@@ -70,6 +70,7 @@ describe('server', () => {
   const mockFlow: FlowDocument = {
     flowId: 'testFlow123',
     userId: 'user123',
+    flowName: 'Test Flow Name', // Added flowName
     isActive: true,
     userCode: 'return "hello";',
     secretReferences: { API_KEY: 'projects/1/secrets/my-api-key/versions/latest' },
@@ -140,14 +141,15 @@ describe('server', () => {
       expect.any(Error),
       expect.objectContaining({ flowId: 'testFlow123' })
     );
-    expect(mockedLoggerExecutionLog).toHaveBeenCalledWith(
-      expect.objectContaining({
-        flowId: 'testFlow123',
-        status: LogStatus.FAIL,
-        error: expect.stringContaining('Failed to parse request body'),
-        userId: 'unknown', // Ensure userId is 'unknown' for this case
-      })
-    );
+      expect(mockedLoggerExecutionLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          flowId: 'testFlow123',
+          userId: 'unknown', // Ensure userId is 'unknown' for this case
+          flowName: 'unknown', // Added flowName
+          status: LogStatus.FAIL,
+          error: expect.stringContaining('Failed to parse request body'),
+        })
+      );
   });
 
   it('should return 404 if flow is not found or inactive', async () => {
@@ -163,14 +165,15 @@ describe('server', () => {
     expect(res.status).toBe(404);
     const body = await res.json();
     expect(body.status).toBe('rejected');
-    expect(mockedLoggerExecutionLog).toHaveBeenCalledWith(
-      expect.objectContaining({
-        flowId: 'nonExistentFlow',
-        status: LogStatus.FAIL,
-        error: expect.stringContaining('not found'),
-        userId: 'unknown', // Ensure userId is 'unknown' for this case
-      })
-    );
+      expect(mockedLoggerExecutionLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          flowId: 'nonExistentFlow',
+          userId: 'unknown', // Ensure userId is 'unknown' for this case
+          flowName: 'unknown', // Added flowName
+          status: LogStatus.FAIL,
+          error: expect.stringContaining('not found'),
+        })
+      );
   });
 
   it('should execute user script and dispatch action on success', async () => {
@@ -198,10 +201,11 @@ describe('server', () => {
     expect(mockedLoggerExecutionLog).toHaveBeenCalledWith(
       expect.objectContaining({
         flowId: 'testFlow123',
+        userId: 'user123',
+        flowName: mockFlow.flowName, // Added flowName
         status: LogStatus.SUCCESS,
         result: 'script_result',
         actionStatus: 202,
-        userId: 'user123',
       })
     );
   });
@@ -220,14 +224,15 @@ describe('server', () => {
     const body = await res.json();
     expect(body.status).toBe('failed');
     expect(body.message).toContain('Secret resolution failed');
-    expect(mockedLoggerExecutionLog).toHaveBeenCalledWith(
-      expect.objectContaining({
-        flowId: 'testFlow123',
-        status: LogStatus.FAIL,
-        error: expect.stringContaining('Secret resolution failed'),
-        userId: 'user123',
-      })
-    );
+      expect(mockedLoggerExecutionLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          flowId: 'testFlow123',
+          userId: 'user123',
+          flowName: mockFlow.flowName, // Added flowName
+          status: LogStatus.FAIL,
+          error: expect.stringContaining('Secret resolution failed'),
+        })
+      );
   });
 
   it('should return 500 if user script fails', async () => {
@@ -244,14 +249,15 @@ describe('server', () => {
     const body = await res.json();
     expect(body.status).toBe('failed');
     expect(body.message).toContain('Script failed');
-    expect(mockedLoggerExecutionLog).toHaveBeenCalledWith(
-      expect.objectContaining({
-        flowId: 'testFlow123',
-        status: LogStatus.FAIL,
-        error: 'Script failed',
-        userId: 'user123',
-      })
-    );
+      expect(mockedLoggerExecutionLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          flowId: 'testFlow123',
+          userId: 'user123',
+          flowName: mockFlow.flowName, // Added flowName
+          status: LogStatus.FAIL,
+          error: 'Script failed',
+        })
+      );
   });
 
   it('should return 500 if action dispatch fails', async () => {
@@ -268,15 +274,16 @@ describe('server', () => {
     const body = await res.json();
     expect(body.status).toBe('dispatch_failed');
     expect(body.message).toContain('Dispatch error');
-    expect(mockedLoggerExecutionLog).toHaveBeenCalledWith(
-      expect.objectContaining({
-        flowId: 'testFlow123',
-        status: LogStatus.ACTION_FAIL,
-        error: expect.stringContaining('Dispatch error'),
-        actionStatus: 500,
-        userId: 'user123',
-      })
-    );
+      expect(mockedLoggerExecutionLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          flowId: 'testFlow123',
+          userId: 'user123',
+          flowName: mockFlow.flowName, // Added flowName
+          status: LogStatus.ACTION_FAIL,
+          error: expect.stringContaining('Dispatch error'),
+          actionStatus: 500,
+        })
+      );
   });
 
   it('/health endpoint should return OK', async () => {

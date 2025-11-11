@@ -1,81 +1,16 @@
-import { SecretManagerServiceClient } from '@google-cloud/secret-manager';
-import { FlowSecrets } from './types.js'; 
+import { FlowSecrets } from './types.js';
 import { logger } from './logger.js';
 
-// --- Configuración y Clientes ---
-
-// El cliente de Secret Manager se inicializa automáticamente usando las credenciales
-// del entorno (la Cuenta de Servicio de Cloud Run).
-const client = new SecretManagerServiceClient();
-
-// Expresión regular para validar y extraer el nombre del recurso de GSM.
-// Acepta 'latest' o un número de versión.
-const GSM_RESOURCE_REGEX = /^projects\/[^/]+\/secrets\/[^/]+\/versions\/(latest|\d+)$/;
-
-// --- Funciones Internas ---
-
 /**
- * Accede y recupera el valor de un secret de Google Secret Manager.
- * @param secretResourceName El nombre completo del recurso GSM (ej: projects/123/secrets/key/versions/latest).
- * @returns El valor del secret como string.
+ * Resuelve los secrets del usuario. En esta arquitectura, esta función es un "passthrough".
+ * Se asume que los secretos ya vienen resueltos desde la capa de control (API de gestión, etc.).
+ * No se realiza ninguna llamada a servicios externos de gestión de secretos.
+ *
+ * @param flowSecrets - Los secrets definidos en el documento de flujo.
+ * @returns Una promesa que se resuelve con el mismo objeto de secrets.
  */
-async function getSecretFromGSM(secretResourceName: string): Promise<string> {
-    try {
-        const [version] = await client.accessSecretVersion({
-            name: secretResourceName,
-        });
-
-        const secretValue = version.payload?.data?.toString();
-        
-        if (!secretValue) {
-            throw new Error(`GSM returned empty data for ${secretResourceName}`);
-        }
-
-        return secretValue;
-    } catch (error) {
-        logger.error(`GSM_ERROR: Failed to access secret ${secretResourceName}. Ensure IAM permissions are set.`, error);
-        throw new Error(`Failed to resolve secret ${secretResourceName}`);
-    }
-}
-
-// --- Función Principal ---
-
-/**
- * Resuelve y recupera todos los secrets del usuario de Google Secret Manager (GSM).
- * Solo los valores que coinciden con el formato GSM URI se resuelven.
- * Todos los demás valores se pasan directamente.
- * * @param flowSecrets - Los secrets definidos en el documento de flujo.
- * @returns Los secrets con sus valores reales obtenidos de GSM o pasados directamente.
- */
-export async function resolveUserSecrets(flowSecrets: FlowSecrets): Promise<FlowSecrets> {
-    const secretKeys = Object.keys(flowSecrets);
-    
-    // Usamos Promise.all para resolver todos los secrets en paralelo
-    const resolutionPromises = secretKeys.map(async (key) => {
-        const value = flowSecrets[key];
-
-        // 1. Validar si el valor es un recurso GSM
-        if (value && GSM_RESOURCE_REGEX.test(value)) {
-            try {
-                // Si es un recurso GSM válido, lo resolvemos
-                const secretValue = await getSecretFromGSM(value);
-                return [key, secretValue];
-            } catch (error) {
-                // Si la resolución falla, el flujo debe abortar por seguridad
-                logger.error(`SECURITY_CRITICAL: Flow aborted due to failure resolving secret ${key}.`, error);
-                throw error; 
-            }
-        }
-        
-        // 2. Si no es un recurso GSM, lo pasamos directamente
-        return [key, value];
-    });
-
-    const resolvedEntries = await Promise.all(resolutionPromises);
-    
-    // Convertir el array de [key, value] de vuelta a un objeto FlowSecrets
-    const resolvedSecrets: FlowSecrets = Object.fromEntries(resolvedEntries);
-
-    // Retornamos el objeto de secrets limpio y resuelto
-    return resolvedSecrets;
-}
+export const resolveUserSecrets = async (flowSecrets: FlowSecrets): Promise<FlowSecrets> => {
+    logger.info('Resolving user secrets (passthrough).');
+    // Devuelve directamente los secretos, ya que se asume que están resueltos.
+    return Promise.resolve(flowSecrets);
+};
